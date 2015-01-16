@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(sandbox)
 
+set(CMAKE_CXX_COMPILER "g++-4.9")
+
+add_definitions("-Wall -Wextra")
+
+list(APPEND CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
+#list(APPEND CMAKE_CXX_FLAGS "-std=c++0x ${CMAKE_CXX_FLAGS}")
+
 file(GLOB apps_source "apps/*.cpp")
 LIST(SORT apps_source)
 
