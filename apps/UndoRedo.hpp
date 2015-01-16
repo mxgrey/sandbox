@@ -47,10 +47,10 @@ public:
 };
 
 template<typename... FunctionParams>
-class TemplatedAction : public Action
+class ReversibleAction : public Action
 {
 public:
-  TemplatedAction( void (*f_redo)(FunctionParams...),
+  ReversibleAction( void (*f_redo)(FunctionParams...),
                    void (*f_undo)(FunctionParams...),
                    FunctionParams... args)
   {
@@ -66,10 +66,10 @@ public:
 };
 
 template<class MyClass, typename... FunctionParams>
-class TemplatedClassAction : public Action
+class ReversibleClassAction : public Action
 {
 public:
-  TemplatedClassAction( MyClass* instance,
+  ReversibleClassAction( MyClass* instance,
                         void (MyClass::*f_redo)(FunctionParams...),
                         void (MyClass::*f_undo)(FunctionParams...),
                         FunctionParams... args)
@@ -105,19 +105,19 @@ enum {
   UNLIMITED_BUFFER = -1
 };
 
-template<int BufferSize>
 class UndoRedoBuffer
 {
 public:
 
-  UndoRedoBuffer()
+  inline UndoRedoBuffer(int buffer_limit = UNLIMITED_BUFFER) :
+    _buffer_limit(buffer_limit)
   {
     _current = _action_list.end();
   }
 
-  void addAction(Action* newAction)
+  inline void addAction(Action* newAction)
   {
-    if(BufferSize == 0)
+    if(_buffer_limit == 0)
       return;
 
     if(_current != _action_list.begin())
@@ -129,17 +129,19 @@ public:
       // the SwapAction class to take care of this.
     }
 
-    if( BufferSize != UNLIMITED_BUFFER
-       && (int)_action_list.size() >= BufferSize )
+    if( _buffer_limit != UNLIMITED_BUFFER
+       && (int)_action_list.size() >= _buffer_limit )
     {
       _remove(--_action_list.end());
     }
 
     _action_list.push_front(newAction);
     _current = _action_list.begin();
+
+    return;
   }
 
-  void undo()
+  inline void undo()
   {
     if(_current != _action_list.end())
     {
@@ -148,7 +150,7 @@ public:
     }
   }
 
-  void redo()
+  inline void redo()
   {
     if(_current != _action_list.begin())
     {
@@ -159,7 +161,7 @@ public:
 
 protected:
 
-  void _remove(std::list<Action*>::iterator at)
+  inline void _remove(std::list<Action*>::iterator at)
   {
     if(at == _action_list.end())
       return;
@@ -168,7 +170,7 @@ protected:
     _action_list.erase(at);
   }
 
-  void _remove(std::list<Action*>::iterator from,
+  inline void _remove(std::list<Action*>::iterator from,
               std::list<Action*>::iterator to)
   {
     if(from == _action_list.end())
@@ -184,6 +186,7 @@ protected:
 
   std::list<Action*> _action_list;
   std::list<Action*>::iterator _current;
+  int _buffer_limit;
 
 };
 
