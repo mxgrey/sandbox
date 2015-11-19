@@ -7,22 +7,15 @@ class Base
 {
 public:
 
-  Base()
-  {
-    mString = "Base";
-  }
-
   template <class T>
   void print()
   {
-    std::cout << mString << " -> " << typeid(T).name() << std::endl;
+    std::cout << "Base -> " << typeid(T).name() << std::endl;
   }
 
 protected:
 
   template <class T> struct type { };
-
-  std::string mString;
 
 };
 
@@ -63,6 +56,11 @@ class Alternative<Spec> : public virtual Base
 {
 public:
 
+  Alternative()
+  {
+    mSpecType = typeid(Spec).name();
+  }
+
   template <class T>
   void print()
   {
@@ -79,7 +77,8 @@ protected:
 
   void print(type<Spec>)
   {
-    std::cout << "Alternative -> " << typeid(Spec).name() << std::endl;
+    std::cout << "Alternative(" << mSpecType << ") -> "
+              << typeid(Spec).name() << std::endl;
   }
 
   template <class T>
@@ -92,6 +91,8 @@ protected:
   {
     return true;
   }
+
+  std::string mSpecType;
 
 };
 
