@@ -19,4 +19,4 @@ LIST(SORT apps_source)
 
 add_executable(test_TemplateMemberShadow apps/test_TemplateMemberShadow.cpp)
 add_executable(test_ConditionalMemberFunction apps/test_ConditionalMemberFunction.cpp)
-add_executable(test_VariadicProperties apps/test_VariadicProperties.cpp)
+add_executable(test_ConditionalPacking apps/test_ConditionalPacking.cpp)
