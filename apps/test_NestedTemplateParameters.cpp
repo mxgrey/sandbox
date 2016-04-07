@@ -21,19 +21,27 @@ struct static_if_else<true, T_if, T_else>
 class Example1
 {
 public:
-  struct StateData { };
+  struct StateData
+  {
+    StateData(int i = 0)
+      : val1(i)
+    {
+      // Do nothing
+    }
+
+    int val1;
+  };
   struct State : StateData
   {
     using Data = StateData;
     State(const Data& data) : Data(data) { }
 
-    State(int i = 0)
-      : val(i)
+    template <typename... Args>
+    State(Args&&... args)
+      : Data(std::forward<Args>(args)...)
     {
       // Do nothing
     }
-
-    int val;
   };
 
   struct PropertiesData { };
@@ -49,12 +57,27 @@ public:
 class Example2
 {
 public:
-  struct StateData { };
+  struct StateData
+  {
+    StateData(double d = 0)
+      : val2(d)
+    {
+      // Do nothing
+    }
+
+    double val2;
+  };
   struct State : StateData
   {
     using Data = StateData;
-    State() = default;
     State(const Data& data) : Data(data) { }
+
+    template <typename... Args>
+    State(Args&&... args)
+      : Data(std::forward<Args>(args)...)
+    {
+      // Do nothing
+    }
   };
 
   struct PropertiesData { };
@@ -88,104 +111,121 @@ public:
 };
 
 //==============================================================================
-template <typename... Types>
+template <class Object>
+struct GetState
+{
+  using Type = typename Object::State;
+};
+
+template <class Object>
+struct GetProperties
+{
+  using Type = typename Object::Properties;
+};
+
+//==============================================================================
+template <template<class> class GetData, typename... Types>
 class MakeThing
 {
 public:
 
-  MakeThing()
+  template <typename... Args>
+  MakeThing(Args&&...)
   {
-    std::cout << "Reached terminal class" << std::endl;
+    // Do nothing
   }
 
   virtual ~MakeThing() = default;
 };
 
-template <class Object, typename T, typename... Remainder>
-class MakeThing<Object, T, Remainder...> :
-    public T,
-    public MakeThing<Remainder...>
+template <template<class> class GetData, typename Object,
+          typename... Remainder>
+class MakeThing<GetData, Object, Remainder...> :
+    public GetData<Object>::Type,
+    public MakeThing<GetData, Remainder...>
 {
 public:
 
   enum Delegate_t { Delegate };
 
+  using Base = typename GetData<Object>::Type;
+
   template <typename Arg>
   struct ConvertIfData
   {
     using type = typename static_if_else<
-        std::is_base_of<typename T::Data, Arg>::value,
-        typename T::Data, Arg>::type;
+        std::is_base_of<typename Base::Data, Arg>::value,
+        typename Base::Data, Arg>::type;
   };
 
-  MakeThing()
+  template <typename... Args>
+  MakeThing(Args&&... args)
+    : MakeThing<GetData, Remainder...>(std::forward<Args>(args)...)
   {
-    std::cout << "Called empty constructor for " << typeid(Object).name()
-              << std::endl;
-  }
-
-  template <typename Arg1, typename... RemainingArgs>
-  MakeThing(const Arg1& arg1, RemainingArgs&&... args)
-    : MakeThing(Delegate,
-                static_cast<const typename ConvertIfData<Arg1>::type&>(arg1),
-                std::forward<RemainingArgs>(args)...)
-  {
-    std::cout << "Calling delegating constructor" << std::endl;
+    _findData(std::forward<Args>(args)...);
   }
 
   void print() const
   {
     std::cout << "\nPrinting " << typeid(Object).name() << " with "
-              << typeid(T).name() << std::endl;
+              << typeid(Base).name() << std::endl;
   }
-
-//  MakeThing(T&& thing)
-//    : T(std::move(thing))
-//  {
-//    std::cout << "using move constructor for " << typeid(Object).name()
-//              << " with " << typeid(T).name() << std::endl;
-//  }
 
 protected:
 
-  template <typename... RemainingArgs>
-  MakeThing(
-      Delegate_t, const typename T::Data& data, RemainingArgs&&... args)
-    : T(data),
-      MakeThing<Remainder...>(std::forward<RemainingArgs>(args)...)
+  void _findData()
   {
-    std::cout << "Make " << typeid(Object).name() << " with "
-              << typeid(typename T::Data).name() << std::endl;
+    // Do nothing
   }
 
-  template <typename... RemainingArgs>
-  MakeThing(Delegate_t, RemainingArgs&&... args)
-    : T(),
-      MakeThing<Remainder...>(std::forward<RemainingArgs>(args)...)
+  template <typename Arg1, typename... Args>
+  void _findData(Arg1&& arg1, Args&&... args)
   {
-    std::cout << "Make " << typeid(Object).name() << " empty" << std::endl;
+    _useIfData(static_cast<const typename ConvertIfData<Arg1>::type&>(arg1));
+    _findData(std::forward<Args>(args)...);
+  }
+
+  template <typename Arg>
+  void _useIfData(Arg)
+  {
+    // Do nothing
+  }
+
+  void _useIfData(const typename Base::Data& data)
+  {
+    static_cast<Base&>(*this) = data;
   }
 
 };
 
 //==============================================================================
-template <class Object>
-using MakeState = MakeThing<Object, typename Object::State>;
+template <class... Objects>
+using MakeState = MakeThing<GetState, Objects...>;
 
-template <class Object>
-using MakeProperties = MakeThing<Object, typename Object::Properties>;
+template <class... Objects>
+using MakeProperties = MakeThing<GetProperties, Objects...>;
 
 int main()
 {
-  using State = Example1::State;
   std::cout << "making state" << std::endl;
   Example1::State e1_state;
   Example1::StateData e1_statedata;
   MakeState<Example1> state(e1_statedata);
 
-  std::cout << "\nmaking otherState" << std::endl;
-//  MakeState<Example1> otherState(Example1::State());
-  MakeState<Example1> otherState(State(0));
 
-  otherState.print();
+  std::cout << "\nmaking otherState" << std::endl;
+  MakeState<Example1, Example2> otherState(
+        Example1::State(6), Example2::State(4e-2));
+
+  std::cout << "\notherState:\n";
+  std::cout << "val1: " << otherState.val1 << std::endl;
+  std::cout << "val2: " << otherState.val2 << std::endl;
+
+  MakeState<Example2, Example1> switchedState(
+        Example1::State(6), Example2::State(4e-2));
+
+  std::cout << "\nswitchedState:\n";
+  std::cout << "val1: " << switchedState.val1 << std::endl;
+  std::cout << "val2: " << switchedState.val2 << std::endl;
+
 }
