@@ -18,3 +18,5 @@ LIST(SORT apps_source)
 #endforeach(app_src_file)
 
 add_executable(test_TemplateMemberShadow apps/test_TemplateMemberShadow.cpp)
+add_executable(test_Aspect apps/test_Aspect.cpp)
+add_executable(test_ContainerTemplate apps/test_ContainerTemplate.cpp)
