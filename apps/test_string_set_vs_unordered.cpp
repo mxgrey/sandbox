@@ -142,6 +142,7 @@ void testBothLookupsForNRandomStrings(
   std::cout << "\n";
 }
 
+
 int main()
 {
   const std::vector<std::size_t> N = { 5, 10, 25, 50, 100, 1000 };

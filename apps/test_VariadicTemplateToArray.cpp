@@ -60,19 +60,24 @@ void someFunction()
                 "Base2 must be in global namespace");
 }
 
-using TripleJoiner = Joiner<Base1, Base2, Base3>;
+class TestClass : public Joiner<Base1, Base2, Base3>
+{
+public:
+
+};
+
 
 int main()
 {
-  const std::array<const char*, TripleJoiner::InterfaceNames.size()> names =
-      TripleJoiner::InterfaceNames;
+  const std::array<const char*, TestClass::InterfaceNames.size()> names =
+      TestClass::InterfaceNames;
 
   std::cout << "Array names:\n";
   for(std::size_t i=0; i < names.size(); ++i)
     std::cout << names[i] << std::endl;
 
   std::vector<std::string> v_names;
-  v_names.reserve(TripleJoiner::InterfaceNames.size());
+//  v_names.reserve(TestClass::InterfaceNames.size());
   for(const char* name : names)
     v_names.push_back(name);
 

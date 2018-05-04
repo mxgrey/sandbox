@@ -30,22 +30,22 @@ class Bar
 
 };
 
-using BarPtr = std::shared_ptr<Bar>;
+//using BarPtr = std::shared_ptr<Bar>;
 
-class Manager
-{
-  template <typename... Args>
-  std::shared_ptr<Manager> create(const BarPtr& bar);
+//class Manager
+//{
+//  template <typename... Args>
+//  std::shared_ptr<Manager> create(const BarPtr& bar);
 
-  template <typename... Args>
-  std::shared_ptr<Manager> create(
-      const BarPtr& bar, )
+//  template <typename... Args>
+//  std::shared_ptr<Manager> create(
+//      const BarPtr& bar, )
 
-protected:
+//protected:
 
-  BarPtr mBar;
+//  BarPtr mBar;
 
-};
+//};
 
 int main()
 {

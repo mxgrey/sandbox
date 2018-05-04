@@ -209,21 +209,21 @@ class Composite { };
 
 int main()
 {
-  SomeStateData state;
-  const SomePropData prop;
-  Composite* comp = nullptr;
+//  SomeStateData state;
+//  const SomePropData prop;
+//  Composite* comp = nullptr;
 
-  Aspect_prop<> p_aspect1(comp, prop);
-  Aspect_prop<> p_aspect2(comp);
+//  Aspect_prop<> p_aspect1(comp, prop);
+//  Aspect_prop<> p_aspect2(comp);
 
-  Aspect_state<> s_aspect1(comp, state);
-  Aspect_state<> s_aspect2(comp);
+//  Aspect_state<> s_aspect1(comp, state);
+//  Aspect_state<> s_aspect2(comp);
 
-  Aspect_state_prop aspect_1(comp, prop, state);
-  Aspect_state_prop aspect_2(comp, state, prop);
-  Aspect_state_prop aspect_3(comp, prop);
-  Aspect_state_prop aspect_4(comp, state);
-  Aspect_state_prop aspect_5(comp);
+//  Aspect_state_prop aspect_1(comp, prop, state);
+//  Aspect_state_prop aspect_2(comp, state, prop);
+//  Aspect_state_prop aspect_3(comp, prop);
+//  Aspect_state_prop aspect_4(comp, state);
+//  Aspect_state_prop aspect_5(comp);
 }
 
 
