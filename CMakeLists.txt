@@ -24,4 +24,4 @@ endforeach(app_src_file)
 
 add_subdirectory(ign-common)
 
-target_compile_options(test_ShadowVirtualFunction PRIVATE -Woverload-virtual)
+#target_compile_options(test_ShadowVirtualFunction PRIVATE -Woverload-virtual)
