@@ -6,13 +6,11 @@ add_definitions("-Wall -Wextra")
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_BINARY_DIR})
 
-list(APPEND CMAKE_CXX_FLAGS "-std=c++14 ${CMAKE_CXX_FLAGS}")
+list(APPEND CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS}")
 #list(APPEND CMAKE_CXX_FLAGS "-std=c++0x ${CMAKE_CXX_FLAGS}")
 
 file(GLOB apps_source "apps/*.cpp")
 LIST(SORT apps_source)
-
-add_subdirectory(spl)
 
 message(STATUS "\n    Applications: ")
 foreach(app_src_file ${apps_source})
@@ -22,6 +20,8 @@ foreach(app_src_file ${apps_source})
     target_link_libraries(${app_base} ${exec_dependencies})
 endforeach(app_src_file)
 
-add_subdirectory(ign-common)
+target_compile_options(test_ShadowVirtualFunction PRIVATE -Woverloaded-virtual)
 
-target_compile_options(test_ShadowVirtualFunction PRIVATE -Woverload-virtual)
+add_subdirectory(spl)
+add_subdirectory(ign-common)
+add_subdirectory(dart)
