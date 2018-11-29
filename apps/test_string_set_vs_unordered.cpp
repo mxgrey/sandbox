@@ -59,21 +59,10 @@ protected:
 
 
 template<typename Container>
-void testLookupForNRandomStrings(
-    const std::size_t N,
-    const std::size_t len)
+void testLookupForNRandomStrings(const std::vector<std::string>& database)
 {
-  std::vector<std::string> database;
-  database.reserve(N);
-
-  std::random_device rd;
-  std::mt19937 mt(rd());
-  std::uniform_int_distribution<std::size_t> n_dist(0, N-1);
-  StringGenerator strGen(len);
-
-  for(std::size_t i=0; i < N; ++i)
-    database.push_back(strGen.getRandomString());
-
+  const std::size_t N = database.size();
+  const std::size_t len = database.front().size();
 
   std::size_t duplicateCount = 0;
   Container container;
@@ -85,20 +74,33 @@ void testLookupForNRandomStrings(
   }
   const auto insert_finish = std::chrono::high_resolution_clock::now();
 
+  std::random_device rd;
+  std::mt19937 mt(rd());
+  std::uniform_int_distribution<std::size_t> n_dist(0, N-1);
+  std::vector<std::size_t> indices;
+  for(std::size_t i=0; i < 2*N; ++i)
+    indices.push_back(n_dist(mt));
+
   const auto lookup_start = std::chrono::high_resolution_clock::now();
   for(std::size_t i=0; i < 2*N; ++i)
   {
-    const std::string& r_string = database[n_dist(mt)];
+    const std::string& r_string = database[indices[i]];
     if(container.find(r_string) == container.end())
       std::cout << "BUG! Could not find entry: " << r_string << std::endl;
   }
   const auto lookup_finish = std::chrono::high_resolution_clock::now();
 
+  StringGenerator strGen(len);
+  std::vector<std::string> randomStrings;
+  randomStrings.reserve(10*N);
+  for(std::size_t i=0; i < 10*N; ++i)
+    randomStrings.push_back(strGen.getRandomString());
+
   // A database for strings which do not exist in the set
   std::vector<std::string> complementbase;
   for(std::size_t i=0; i < 10*N; ++i)
   {
-    const std::string str = strGen.getRandomString();
+    const std::string str = randomStrings[i];
     if(container.find(str) == container.end())
       complementbase.push_back(str);
 
@@ -130,15 +132,35 @@ void testLookupForNRandomStrings(
             << " | total: " << insert_time + lookup_time + fail_time << std::endl;
 }
 
+std::vector<std::string> generateDatabase(
+    const std::size_t N,
+    const std::size_t len)
+{
+  std::vector<std::string> database;
+  database.reserve(N);
+
+  std::random_device rd;
+  std::mt19937 mt(rd());
+  std::uniform_int_distribution<std::size_t> n_dist(0, N-1);
+  StringGenerator strGen(len);
+
+  for(std::size_t i=0; i < N; ++i)
+    database.push_back(strGen.getRandomString());
+
+  return database;
+}
+
 void testBothLookupsForNRandomStrings(
     const std::size_t N,
     const std::size_t len)
 {
+  std::vector<std::string> database = generateDatabase(N, len);
+
   std::cout << "For set ";
-  testLookupForNRandomStrings<std::set<std::string>>(N, len);
+  testLookupForNRandomStrings<std::set<std::string>>(database);
 
   std::cout << "For uno ";
-  testLookupForNRandomStrings<std::unordered_set<std::string>>(N, len);
+  testLookupForNRandomStrings<std::unordered_set<std::string>>(database);
   std::cout << "\n";
 }
 
