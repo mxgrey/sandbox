@@ -100,7 +100,7 @@ void testLookupForNRandomStrings(const std::vector<std::string>& database)
   std::vector<std::string> complementbase;
   for(std::size_t i=0; i < 10*N; ++i)
   {
-    const std::string str = randomStrings[i];
+    const std::string& str = randomStrings[i];
     if(container.find(str) == container.end())
       complementbase.push_back(str);
 
