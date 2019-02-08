@@ -39,49 +39,44 @@ int main(int argc, char* argv[])
   world->getConstraintSolver()->setCollisionDetector(
         dart::collision::OdeCollisionDetector::create());
 
-  double z = 1.0;
-  for(const std::string& name : {"1"/*, "2"*/})
-  {
-    const auto skeleton = dart::dynamics::Skeleton::create(name);
-    auto pair = skeleton
-        ->createJointAndBodyNodePair<dart::dynamics::FreeJoint>();
+  const auto skeleton = dart::dynamics::Skeleton::create("box");
+  auto pair = skeleton
+      ->createJointAndBodyNodePair<dart::dynamics::FreeJoint>();
 
-    auto joint = pair.first;
-    auto bn = pair.second;
 
-    Eigen::Isometry3d tf = Eigen::Isometry3d::Identity();
-    tf.translation()[2] = z;
-    joint->setTransform(tf);
-    z += 5.0;
+  const double z = -0.1;
 
-    auto sn = bn->createShapeNodeWith<
-        dart::dynamics::CollisionAspect,
-        dart::dynamics::VisualAspect>(
-          std::make_shared<dart::dynamics::MeshShape>(
-            /*0.01*Eigen::Vector3d::Ones(), mesh, mesh_path*/
-            Eigen::Vector3d::Ones(), mesh, mesh_path));
+  auto joint = pair.first;
+  auto bn = pair.second;
 
-    sn->setRelativeRotation(
-          Eigen::Matrix3d(
-            Eigen::AngleAxisd(90*M_PI/180.0, Eigen::Vector3d::UnitX())));
+  Eigen::Isometry3d tf = Eigen::Isometry3d::Identity();
+  tf.translation()[2] = z;
+  joint->setTransform(tf);
 
-    world->addSkeleton(skeleton);
-  }
+  bn->createShapeNodeWith<
+      dart::dynamics::CollisionAspect,
+      dart::dynamics::VisualAspect>(
+//        std::make_shared<dart::dynamics::BoxShape>(Eigen::Vector3d::Ones()));
+        std::make_shared<dart::dynamics::MeshShape>(
+          Eigen::Vector3d::Ones(), mesh, mesh_path));
+
+  world->addSkeleton(skeleton);
 
 //  const Eigen::Matrix3d R(Eigen::AngleAxisd(45.0*M_PI/180.0, Eigen::Vector3d::UnitY()));
-  const Eigen::Matrix3d R(Eigen::AngleAxisd(0.0*M_PI/180.0, Eigen::Vector3d::UnitY()));
+  const Eigen::Matrix3d R(Eigen::AngleAxisd(0.00001*M_PI/180.0, Eigen::Vector3d::UnitX()));
 
   const auto ground = dart::dynamics::Skeleton::create("ground");
-  auto bn = ground->createJointAndBodyNodePair<dart::dynamics::WeldJoint>().second;
+  bn = ground->createJointAndBodyNodePair<dart::dynamics::WeldJoint>().second;
   auto sn = bn->createShapeNodeWith<
       dart::dynamics::CollisionAspect,
       dart::dynamics::VisualAspect>(
 //        std::make_shared<dart::dynamics::BoxShape>(
 //          Eigen::Vector3d(100.0, 100.0, 0.01)));
         std::make_shared<dart::dynamics::PlaneShape>(
-          R * Eigen::Vector3d::UnitZ(), 0.0));
+//          R * -Eigen::Vector3d::UnitZ(), z));
+          R * Eigen::Vector3d::UnitY(), z));
 
-  sn->setRelativeTranslation(-0.1 * Eigen::Vector3d::UnitZ());
+//  sn->setRelativeTranslation(0.0 * Eigen::Vector3d::UnitZ());
 
 
 
@@ -94,7 +89,8 @@ int main(int argc, char* argv[])
 
   viewer.run();
 
-  std::cout << "time steps: " << world->getTime()/world->getTimeStep() << std::endl;
-  std::cout << "final height: " << world->getSkeleton(0)->getRootBodyNode()
-               ->getTransform().translation()[2] << std::endl;
+  world->step();
+
+  std::cout << "contacts: " << world->getLastCollisionResult().getNumContacts()
+            << std::endl;
 }
