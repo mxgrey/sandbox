@@ -16,6 +16,32 @@ struct BarMessage
   double value_2;
   FooMessage foo;
   std::vector<double> more_values;
+
+  BarMessage() = default;
+
+  BarMessage(const BarMessage& other)
+  {
+    std::cout << "Performing a copy construction" << std::endl;
+    copy(other);
+  }
+
+  BarMessage& operator=(const BarMessage& other)
+  {
+    std::cout << "Performing a copy assignment" << std::endl;
+    copy(other);
+    return *this;
+  }
+
+  BarMessage(BarMessage&& other) = default;
+  BarMessage& operator=(BarMessage&& other) = default;
+
+  void copy(const BarMessage& other)
+  {
+    value_1 = other.value_1;
+    value_2 = other.value_2;
+    foo = other.foo;
+    more_values = other.more_values;
+  }
 };
 
 template<typename> struct build;
@@ -55,7 +81,7 @@ struct Init_BarMessage_more_values
   BarMessage more_values(std::vector<double> v)
   {
     _msg.more_values = std::move(v);
-    return _msg;
+    return std::move(_msg);
   }
 
 private:
