@@ -1,6 +1,9 @@
 
 #include <memory>
 
+#include <iostream>
+#include <typeindex>
+
 class FooOne
 {
   struct Properties
@@ -49,5 +52,5 @@ class Bar
 
 int main()
 {
-
+  std::cout << typeid(std::shared_ptr<void>).name() << std::endl;
 }
