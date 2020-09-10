@@ -2,6 +2,7 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <memory>
 #include <queue>
@@ -164,7 +165,8 @@ struct InvariantLess
 
 struct Node
 {
-  std::vector<std::vector<Assignment>> assignments;
+  using Assignments = std::vector<std::vector<Assignment>>;
+  Assignments assignments;
   std::unordered_map<std::size_t, PendingTask> unassigned;
 
   using InvariantSet = std::multiset<Invariant, InvariantLess>;
@@ -389,8 +391,16 @@ class Filter
 {
 public:
 
-  Filter(bool passthrough)
-    : _passthrough(passthrough)
+  enum class Type
+  {
+    Passthrough,
+    Trie,
+    Hash
+  };
+
+  Filter(Type type, const std::size_t N_tasks)
+    : _type(type),
+      _set(N_tasks, AssignmentHash(N_tasks))
   {
     // Do nothing
   }
@@ -411,14 +421,77 @@ private:
     std::unordered_map<std::size_t, std::unique_ptr<AgentTable>> task;
   };
 
-  bool _passthrough;
+  using Assignments = Node::Assignments;
+  struct AssignmentHash
+  {
+    AssignmentHash(std::size_t N)
+    {
+      // We add 1 to N because
+      _shift = std::ceil(std::log2(N+1));
+    }
+
+    std::size_t operator()(const Assignments& assignments) const
+    {
+      std::size_t output = 0;
+      std::size_t count = 0;
+      for (const auto& a : assignments)
+      {
+        for (const auto& s : a)
+        {
+          // We add 1 to the task_id to differentiate between task_id == 0 and
+          // a task being unassigned.
+          const std::size_t id = s.task_id + 1;
+          output += id << (_shift * (count++));
+        }
+      }
+
+      return output;
+    }
+
+    std::size_t _shift;
+  };
+
+  struct AssignmentEqual
+  {
+    bool operator()(const Assignments& A, const Assignments& B) const
+    {
+      if (A.size() != B.size())
+        return false;
+
+      for (std::size_t i=0; i < A.size(); ++i)
+      {
+        const auto& a = A[i];
+        const auto& b = B[i];
+
+        if (a.size() != b.size())
+          return false;
+
+        for (std::size_t j=0; j < a.size(); ++j)
+        {
+          if (a[j].task_id != b[j].task_id)
+            return false;
+        }
+      }
+
+      return true;
+    }
+  };
+
+  using Set = std::unordered_set<Assignments, AssignmentHash, AssignmentEqual>;
+
+
+  Type _type;
   AgentTable _root;
+  Set _set;
 };
 
 bool Filter::ignore(const Node& node)
 {
-  if (_passthrough)
+  if (_type == Type::Passthrough)
     return false;
+
+  if (_type == Type::Hash)
+    return !_set.insert(node.assignments).second;
 
   bool new_node = false;
 
@@ -506,7 +579,7 @@ struct LowestCostEstimate
 ConstNodePtr solve(
     std::vector<State> initial_states,
     std::vector<ConstTaskRequestPtr> requests,
-    const bool use_filter,
+    const Filter::Type filter_type,
     const bool display = false)
 {
   const auto start = std::chrono::steady_clock::now();
@@ -529,7 +602,7 @@ ConstNodePtr solve(
   Queue queue;
   queue.push(initial_node);
 
-  Filter filter(!use_filter);
+  Filter filter(filter_type, requests.size());
 
   std::size_t total_queue_entries = 1;
   std::size_t total_queue_expansions = 0;
@@ -689,7 +762,7 @@ int main()
   std::default_random_engine rng;
   std::uniform_real_distribution<double> dist(-30, 30);
 
-  const std::size_t N_requests = 12;
+  const std::size_t N_requests = 15;
   std::vector<ConstTaskRequestPtr> requests;
   requests.reserve(N_requests);
   for (std::size_t i=0; i < N_requests; ++i)
@@ -708,7 +781,9 @@ int main()
 
   const bool display = false;
 
-  const auto solution = solve(initial_states, requests, true, display);
+  const auto solution = solve(
+//        initial_states, requests, Filter::Type::Trie, display);
+        initial_states, requests, Filter::Type::Hash, display);
 
   if (!solution)
   {
