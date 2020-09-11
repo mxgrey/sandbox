@@ -14,6 +14,8 @@
 #include <cassert>
 #include <iostream>
 
+const double segmentation_threshold = 1.0;
+
 struct State
 {
   std::array<double, 2> p;
@@ -36,6 +38,7 @@ public:
   {
     std::size_t candidate;
     State state;
+    double wait_until;
   };
 
   using Map = std::multimap<double, Entry>;
@@ -86,12 +89,12 @@ public:
     return _value_map.begin()->first;
   }
 
-  void update_candidate(std::size_t candidate, State state)
+  void update_candidate(std::size_t candidate, State state, double wait_until)
   {
     const auto it = _candidate_map.at(candidate);
     _value_map.erase(it);
     _candidate_map[candidate] = _value_map.insert(
-      {state.finish_time, Entry{candidate, state}});
+      {state.finish_time, Entry{candidate, state, wait_until}});
   }
 
 
@@ -122,9 +125,18 @@ class TaskRequest
 {
 public:
 
-  virtual State estimate(const State& initial_state) const = 0;
+  /// Estimate the state that the robot will end in once this task is finished
+  virtual State estimate_finish(const State& initial_state) const = 0;
 
+  /// Estimate the invariant component of the task's duration
   virtual double invariant_duration() const = 0;
+
+  /// Get the earliest time that this task may begin
+  virtual double earliest_start_time() const = 0;
+
+  /// Given an initial state, get the time that the robot should wait until
+  /// before initiating this task
+  virtual double wait_until(const State& initial_state) const = 0;
 
 };
 
@@ -134,19 +146,22 @@ struct PendingTask
       std::vector<State> initial_states,
       ConstTaskRequestPtr request_)
     : request(std::move(request_)),
-      candidates(Candidates::make(initial_states, *request))
+      candidates(Candidates::make(initial_states, *request)),
+      earliest_start_time(request->earliest_start_time())
   {
     // Do nothing
   }
 
   ConstTaskRequestPtr request;
   Candidates candidates;
+  double earliest_start_time;
 };
 
 struct Assignment
 {
   std::size_t task_id;
   State state;
+  double earliest_start_time;
 };
 
 struct Invariant
@@ -172,6 +187,7 @@ struct Node
   using InvariantSet = std::multiset<Invariant, InvariantLess>;
   InvariantSet unassigned_invariants;
   double cost_estimate;
+  double latest_time;
 
   void sort_invariants()
   {
@@ -245,26 +261,27 @@ Candidates Candidates::make(
   for (std::size_t s=0; s < initial_states.size(); ++s)
   {
     const auto& state = initial_states[s];
-    const auto finish = request.estimate(state);
-    initial_map.insert({finish.finish_time, Entry{s, finish}});
+    const auto finish = request.estimate_finish(state);
+    const auto wait_until = request.wait_until(state);
+    initial_map.insert({finish.finish_time, Entry{s, finish, wait_until}});
   }
 
   return Candidates(std::move(initial_map));
 }
 
-double g(const Node& n, bool details = false)
+double g(const Node::Assignments& assignments, bool details = false)
 {
   double output = 0.0;
 
   std::size_t a = 0;
-  for (const auto& agent : n.assignments)
+  for (const auto& agent : assignments)
   {
     if (details)
       std::cout << "Costs for agent " << a++ << std::endl;
 
     for (const auto& assignment : agent)
     {
-      output += assignment.state.finish_time;
+      output += assignment.state.finish_time - assignment.earliest_start_time;
 
       if (details)
       {
@@ -275,6 +292,11 @@ double g(const Node& n, bool details = false)
   }
 
   return output;
+}
+
+double g(const Node& n, bool details = false)
+{
+  return g(n.assignments, details);
 }
 
 class InvariantHeuristicQueue
@@ -533,6 +555,24 @@ bool Filter::ignore(const Node& node)
   return !new_node;
 }
 
+double get_latest_time(const Node& node)
+{
+  double latest = -std::numeric_limits<double>::infinity();
+  for (const auto& a : node.assignments)
+  {
+    if (a.empty())
+      continue;
+
+    const double f = a.back().state.finish_time;
+    if (latest < f)
+      latest = f;
+  }
+
+  assert(!std::isinf(latest));
+
+  return latest;
+}
+
 std::vector<ConstNodePtr> expand(ConstNodePtr parent, Filter& filter)
 {
   std::vector<ConstNodePtr> new_nodes;
@@ -543,20 +583,29 @@ std::vector<ConstNodePtr> expand(ConstNodePtr parent, Filter& filter)
     for (auto it = range.begin; it != range.end; ++it)
     {
       const auto& c = it->second;
+      if (parent->latest_time + segmentation_threshold < c.wait_until)
+      {
+        // There's no need to assign this task yet because no timeline of tasks
+        // has reached a point where this task would be relevant.
+        continue;
+      }
 
       auto new_node = std::make_shared<Node>(*parent);
-      new_node->assignments[c.candidate]
-          .push_back(Assignment{u.first, c.state});
+      new_node->assignments[c.candidate].push_back(
+          Assignment{u.first, c.state, u.second.earliest_start_time});
 
       new_node->pop_unassigned(u.first);
 
       for (auto& new_u : new_node->unassigned)
       {
         new_u.second.candidates.update_candidate(
-              c.candidate, new_u.second.request->estimate(c.state));
+              c.candidate,
+              new_u.second.request->estimate_finish(c.state),
+              new_u.second.request->wait_until(c.state));
       }
 
       new_node->cost_estimate = f(*new_node);
+      new_node->latest_time = get_latest_time(*new_node);
 
       if (filter.ignore(*new_node))
         continue;
@@ -576,13 +625,26 @@ struct LowestCostEstimate
   }
 };
 
-ConstNodePtr solve(
-    std::vector<State> initial_states,
-    std::vector<ConstTaskRequestPtr> requests,
-    const Filter::Type filter_type,
-    const bool display = false)
+bool finished(const Node& node)
 {
-  const auto start = std::chrono::steady_clock::now();
+  for (const auto& u : node.unassigned)
+  {
+    const auto& range = u.second.candidates.best_candidates();
+    for (auto it = range.begin; it != range.end; ++it)
+    {
+      const auto wait_until = it->second.wait_until;
+      if (wait_until <= node.latest_time + segmentation_threshold)
+        return false;
+    }
+  }
+
+  return true;
+}
+
+ConstNodePtr make_initial_node(
+    std::vector<State> initial_states,
+    std::vector<ConstTaskRequestPtr> requests)
+{
   auto initial_node = std::make_shared<Node>();
 
   initial_node->assignments.resize(initial_states.size());
@@ -594,47 +656,84 @@ ConstNodePtr solve(
   }
   initial_node->sort_invariants();
 
+  initial_node->latest_time = [&]() -> double
+  {
+    double latest = -std::numeric_limits<double>::infinity();
+    for (const auto& s : initial_states)
+    {
+      if (latest < s.finish_time)
+        latest = s.finish_time;
+    }
+
+    assert(!std::isinf(latest));
+    return latest;
+  }();
+
+  double wait_until = std::numeric_limits<double>::infinity();
+  for (const auto& u : initial_node->unassigned)
+  {
+    const auto& range = u.second.candidates.best_candidates();
+    for (auto it = range.begin; it != range.end; ++it)
+    {
+      if (it->second.wait_until < wait_until)
+        wait_until = it->second.wait_until;
+    }
+  }
+  assert(!std::isinf(wait_until));
+
+  if (initial_node->latest_time < wait_until)
+    initial_node->latest_time = wait_until;
+
+  return initial_node;
+}
+
+ConstNodePtr solve(
+    ConstNodePtr initial_node,
+    const std::size_t N_tasks,
+    const Filter::Type filter_type,
+    const bool display = false)
+{
+  const auto start = std::chrono::steady_clock::now();
+
   using Queue = std::priority_queue<
       ConstNodePtr,
       std::vector<ConstNodePtr>,
       LowestCostEstimate>;
 
   Queue queue;
-  queue.push(initial_node);
+  queue.push(std::move(initial_node));
 
-  Filter filter(filter_type, requests.size());
+  Filter filter(filter_type, N_tasks);
 
   std::size_t total_queue_entries = 1;
   std::size_t total_queue_expansions = 0;
-  while (!queue.empty())
+  ConstNodePtr top = nullptr;
+
+  const auto print_conclusion = [&]()
   {
+    const auto finish = std::chrono::steady_clock::now();
+    const auto elapsed = std::chrono::duration_cast<
+        std::chrono::duration<double>>(finish - start);
+
     if (display)
     {
-      auto display_queue = queue;
-      while (!display_queue.empty())
-      {
-        const auto top = display_queue.top();
-        display_queue.pop();
-        print_node(*top);
-      }
-
-      std::cout << "=========================" << std::endl;
-    }
-
-    const auto top = queue.top();
-    queue.pop();
-
-    if (top->unassigned.empty())
-    {
-      const auto finish = std::chrono::steady_clock::now();
-      const auto elapsed = std::chrono::duration_cast<
-          std::chrono::duration<double>>(finish - start);
-
+      std::cout << " ====================== \n";
       std::cout << "Time elapsed: " << elapsed.count() << std::endl;
       std::cout << "Winning cost: " << top->cost_estimate << std::endl;
       std::cout << "Final queue size: " << queue.size() << std::endl;
       std::cout << "Total queue expansions: " << total_queue_expansions << std::endl;
       std::cout << "Total queue entries: " << total_queue_entries << std::endl;
+    }
+  };
+
+  while (!queue.empty())
+  {
+    top = queue.top();
+    queue.pop();
+
+    if (finished(*top))
+    {
+      print_conclusion();
 
       // This is the solution criteria
       return top;
@@ -649,6 +748,7 @@ ConstNodePtr solve(
       queue.push(n);
   }
 
+  print_conclusion();
   return nullptr;
 }
 
@@ -667,9 +767,9 @@ class TravelTaskRequest : public TaskRequest
 {
 public:
 
-  TravelTaskRequest(std::array<double, 2> p, double speed = 1.0)
+  TravelTaskRequest(std::array<double, 2> p, double start_time = 0.0)
     : _p(p),
-      _speed(speed)
+      _start_time(start_time)
   {
     // Do nothing
   }
@@ -679,14 +779,13 @@ public:
     return std::make_shared<TravelTaskRequest>(p, speed);
   }
 
-  State estimate(const State& initial_state) const final
+  State estimate_finish(const State& initial_state) const final
   {
     State output;
     output.p = _p;
 
     const auto& p0 = initial_state.p;
-    output.finish_time =
-        initial_state.finish_time + travel_time(p0, _p, _speed);
+    output.finish_time = wait_until(initial_state) + travel_time(p0, _p);
 
     return output;
   }
@@ -696,9 +795,21 @@ public:
     return 0.0;
   }
 
+  double earliest_start_time() const final
+  {
+    return _start_time;
+  }
+
+  double wait_until(const State& initial_state) const final
+  {
+    const auto& p0 = initial_state.p;
+    const double ideal_start = _start_time - travel_time(p0, _p);
+    return std::max(initial_state.finish_time, ideal_start);
+  }
+
 private:
   std::array<double, 2> _p;
-  double _speed;
+  double _start_time;
 };
 
 class DeliveryTaskRequest : public TaskRequest
@@ -707,27 +818,30 @@ public:
 
   DeliveryTaskRequest(
       std::array<double, 2> pickup,
-      std::array<double, 2> dropoff)
+      std::array<double, 2> dropoff,
+      double start_time = 0.0)
     : _pickup(pickup),
-      _dropoff(dropoff)
+      _dropoff(dropoff),
+      _start_time(start_time)
   {
     _invariant_duration = travel_time(_pickup, _dropoff);
   }
 
   static ConstTaskRequestPtr make(
       std::array<double, 2> pickup,
-      std::array<double, 2> dropoff)
+      std::array<double, 2> dropoff,
+      double start_time = 0.0)
   {
-    return std::make_shared<DeliveryTaskRequest>(pickup, dropoff);
+    return std::make_shared<DeliveryTaskRequest>(pickup, dropoff, start_time);
   }
 
-  State estimate(const State& initial_state) const final
+  State estimate_finish(const State& initial_state) const final
   {
     State output;
     output.p = _dropoff;
 
     output.finish_time =
-        initial_state.finish_time
+        wait_until(initial_state)
         + travel_time(initial_state.p, _pickup)
         + _invariant_duration;
 
@@ -739,64 +853,171 @@ public:
     return _invariant_duration;
   }
 
+  double earliest_start_time() const final
+  {
+    return _start_time;
+  }
+
+  double wait_until(const State& initial_state) const final
+  {
+    const auto& p0 = initial_state.p;
+    const double ideal_start = _start_time - travel_time(p0, _pickup);
+    return std::max(initial_state.finish_time, ideal_start);
+  }
+
 
 private:
   std::array<double, 2> _pickup;
   std::array<double, 2> _dropoff;
   double _invariant_duration;
+  double _start_time;
 };
+
+void print_solution_node(
+    const Node& node,
+    const std::unordered_map<std::size_t, std::size_t>& task_id_map)
+{
+  std::cout << "\nAssignments:\n";
+  for (std::size_t i=0; i < node.assignments.size(); ++i)
+  {
+    std::cout << i;
+    if (node.assignments[i].empty())
+      std::cout << " (null):";
+    else
+      std::cout << " (" << node.assignments[i].back().state.finish_time << "):";
+
+    for (const auto& t : node.assignments[i])
+      std::cout << "  " << task_id_map.at(t.task_id);
+    std::cout << "\n";
+  }
+  std::cout << std::endl;
+
+  std::cout << "Unassigned:\n";
+  for (const auto& u : node.unassigned)
+  {
+    std::cout << "Task " << task_id_map.at(u.first) << " candidates:";
+    const auto& range = u.second.candidates.best_candidates();
+    for (auto it = range.begin; it != range.end; ++it)
+    {
+      std::cout << " (" << it->second.candidate << ": "
+                << it->second.wait_until << ")";
+    }
+    std::cout << "\n";
+  }
+  std::cout << std::endl;
+}
+
+Node::Assignments complete_solve(
+    std::vector<State> initial_states,
+    std::vector<ConstTaskRequestPtr> requests,
+    const Filter::Type filter_type,
+    const bool display)
+{
+  auto node = make_initial_node(initial_states, requests);
+  Node::Assignments complete_assignments;
+  complete_assignments.resize(node->assignments.size());
+
+  std::unordered_map<std::size_t, std::size_t> task_id_map;
+  for (std::size_t i=0; i < requests.size(); ++i)
+    task_id_map[i] = i;
+
+  while (node)
+  {
+    node = solve(node, requests.size(), filter_type, display);
+
+    if (!node)
+    {
+      std::cout << "No solution found! :(" << std::endl;
+      return {};
+    }
+
+    if (display)
+      print_solution_node(*node, task_id_map);
+
+    assert(complete_assignments.size() == node->assignments.size());
+    for (std::size_t i=0; i < complete_assignments.size(); ++i)
+    {
+      auto& all_assignments = complete_assignments[i];
+      const auto& new_assignments = node->assignments[i];
+      for (const auto& a : new_assignments)
+      {
+        all_assignments.push_back(a);
+        all_assignments.back().task_id = task_id_map.at(a.task_id);
+      }
+    }
+
+    if (node->unassigned.empty())
+      return complete_assignments;
+
+    std::unordered_map<std::size_t, std::size_t> new_task_id_map;
+    requests.clear();
+    std::size_t task_counter = 0;
+    for (const auto& u : node->unassigned)
+    {
+      requests.push_back(u.second.request);
+      new_task_id_map[task_counter++] = task_id_map[u.first];
+    }
+    task_id_map = std::move(new_task_id_map);
+
+    node = make_initial_node(initial_states, requests);
+  }
+
+  return complete_assignments;
+}
 
 int main()
 {
-//  std::vector<ConstTaskRequestPtr> requests =
-//  {
-//    TravelTaskRequest::make({5, 5}),    // 0
-//    TravelTaskRequest::make({-5, 5}),   // 1
-//    TravelTaskRequest::make({10, -10}), // 2
-//    TravelTaskRequest::make({1, 0}),    // 3
-//    TravelTaskRequest::make({2, 30}),   // 4
-//    TravelTaskRequest::make({12, 10})   // 5
-//  };
-
   // We use the default seed for rng so that the delivery tasks are consistent
   std::default_random_engine rng;
   std::uniform_real_distribution<double> dist(-30, 30);
 
-  const std::size_t N_requests = 15;
+  const std::size_t N_requests = 5;
+  std::vector<double> schedule_segments =
+    {0.0, 300.0, 600.0, 700.0, 900.0, 950};
+
   std::vector<ConstTaskRequestPtr> requests;
-  requests.reserve(N_requests);
-  for (std::size_t i=0; i < N_requests; ++i)
+  requests.reserve(N_requests * schedule_segments.size());
+
+  for (const auto& s : schedule_segments)
   {
-    std::array<double, 2> pickup = {dist(rng), dist(rng)};
-    std::array<double, 2> dropoff = {dist(rng), dist(rng)};
-    requests.emplace_back(DeliveryTaskRequest::make(pickup, dropoff));
+    for (std::size_t i=0; i < N_requests; ++i)
+    {
+      std::array<double, 2> pickup = {dist(rng), dist(rng)};
+      std::array<double, 2> dropoff = {dist(rng), dist(rng)};
+      requests.emplace_back(DeliveryTaskRequest::make(pickup, dropoff, s));
+    }
   }
 
   std::vector<State> initial_states =
   {
     State::make({0, 0}),
     State::make({5, 0}),
-    State::make({-5, 0})
+    State::make({-5, 0}),
+    State::make({0, 5})
   };
 
-  const bool display = false;
+  bool display = false;
+//  display = true;
 
-  const auto solution = solve(
-//        initial_states, requests, Filter::Type::Trie, display);
+  const auto start = std::chrono::steady_clock::now();
+  const auto assignments = complete_solve(
         initial_states, requests, Filter::Type::Hash, display);
+  const auto finish = std::chrono::steady_clock::now();
+  const auto elapsed = std::chrono::duration_cast<
+      std::chrono::duration<double>>(finish - start);
 
-  if (!solution)
-  {
-    std::cout << "No solution found! :(" << std::endl;
-    return 0;
-  }
-
+  std::cout << "\n ------------------------------------------ \n";
+  std::cout << "Total agents: " << initial_states.size() << std::endl;
+  std::cout << "Total tasks: " << requests.size() << std::endl;
+  std::cout << "Final cost: " << g(assignments) << std::endl;
+  std::cout << "Total time elapsed: " << elapsed.count() << std::endl;
   std::cout << "Assignments:\n";
-  for (std::size_t i=0; i < solution->assignments.size(); ++i)
+  for (std::size_t i=0; i < assignments.size(); ++i)
   {
     std::cout << i << ":";
-    for (const auto& t : solution->assignments[i])
-      std::cout << "  " << t.task_id;
+    for (const auto& a : assignments[i])
+      std::cout << " (" << a.task_id << ": " << a.state.finish_time << ")";
     std::cout << "\n";
   }
+  std::cout << std::endl;
 }
